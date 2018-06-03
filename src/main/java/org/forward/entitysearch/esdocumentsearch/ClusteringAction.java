@@ -6,25 +6,14 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 import java.io.IOException;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.TimeUnit;
 
-import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequest;
@@ -45,7 +34,6 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -60,19 +48,8 @@ import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.search.RestSearchAction;
-import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.search.SearchHitField;
-import org.elasticsearch.search.SearchHits;
-import org.elasticsearch.search.aggregations.Aggregation;
-import org.elasticsearch.search.aggregations.InternalAggregation;
-import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
-import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;
-import org.elasticsearch.search.internal.InternalSearchResponse;
-import org.elasticsearch.search.profile.SearchProfileShardResults;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.TransportChannel;
-import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportService;
 
 /**
@@ -135,6 +112,18 @@ public class ClusteringAction extends
 			return searchRequest;
 		}
 
+		class QueryProperties {
+			public boolean inOrder;
+			public int slop;
+			public double boost;
+
+			QueryProperties(boolean inOrder, int slop, double boost) {
+				this.inOrder = inOrder;
+				this.slop = slop;
+				this.boost = boost;
+			}
+		}
+
 		/**
 		 * Parses some {@link org.elasticsearch.common.xcontent.XContent} and fills in
 		 * the request.
@@ -158,98 +147,51 @@ public class ClusteringAction extends
 					}
 					// String[] tokens = ((String)searchRequestMap.get("query")).split(DELIMITER);
 					StringTokenizer tokens = new StringTokenizer((String) searchRequestMap.get("query"), DELIMITER);
-					boolean flag = false;
-					if (searchRequestMap.get("type") != null
-							&& ((String) searchRequestMap.get("type")).equals("e_document")) {
-						flag = true;
-						searchRequestMap.remove("type");
-					}
+//					boolean flag = false;
+//					if (searchRequestMap.get("type") != null
+//							&& ((String) searchRequestMap.get("type")).equals("e_document")) {
+//						flag = true;
+//						searchRequestMap.remove("type");
+//					}
 					// HashMap<String, Object> query = (HashMap<String,
 					// Object>)searchRequestMap.get("query");
 					List<HashMap<String, Object>> spanNearElements = new ArrayList<>();
 					while (tokens.hasMoreTokens()) {
 						String token = tokens.nextToken();
 						if (token.charAt(0) == '@') {
-							boolean inOrder = false;
-							int slop = 10;
-							double boost = 1;
+							QueryProperties properties = new QueryProperties(false, 10, 1);
 							if (token.equalsIgnoreCase("@near")) {
 								token = tokens.nextToken();
 								if (token.equalsIgnoreCase("[")) {
-									ArrayList<String> properties = getPropertiesWithinBracket(tokens);
-									if (properties.size()>0) {
-										inOrder = Boolean.parseBoolean(properties.get(0));
-									} 
-									if (properties.size()>1) {
-										slop = Integer.parseInt(properties.get(1));
-									} 
-									if (properties.size()>2) {
-										boost = Double.parseDouble(properties.get(2));
-									} 
-									if (properties.size()==0){
-										System.out.println("Empty properties detected");
-									}
-									token = tokens.nextToken();
-									System.out.println("" + inOrder + " " + slop + " " + boost);
-									System.out.println(properties.size());
+									properties = getPropertiesWithinBracket(tokens);
 								}
 								if (!token.equalsIgnoreCase("(")) {
 									System.out.println("Expected ( after @near!!!! but get the following instead " + token);
 								}
 								List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_entity_", "_begin");
-								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, inOrder, slop, boost);
+								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
 								spanNearElements.add(subQuery);
 							} else if (token.equalsIgnoreCase("@near_x")) {
 								token = tokens.nextToken();
 								if (token.equalsIgnoreCase("[")) {
-									ArrayList<String> properties = getPropertiesWithinBracket(tokens);
-									if (properties.size()>0) {
-										inOrder = Boolean.parseBoolean(properties.get(0));
-									} 
-									if (properties.size()>1) {
-										slop = Integer.parseInt(properties.get(1));
-									} 
-									if (properties.size()>2) {
-										boost = Double.parseDouble(properties.get(2));
-									} 
-									if (properties.size()==0){
-										System.out.println("Empty properties detected");
-									}
-									token = tokens.nextToken();
-									System.out.println("" + inOrder + " " + slop + " " + boost);
-									System.out.println(properties.size());
+									properties = getPropertiesWithinBracket(tokens);
 								}
 								if (!token.equalsIgnoreCase("(")) {
 									System.out.println("Expected ( after @near_x !!!! but get the following token instead: " + token);
 								}
 								List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_xpos_entity_", "");
-								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, inOrder, slop, boost);
+								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
 								spanNearElements.add(subQuery);
 							} else if (token.equalsIgnoreCase("@near_y")) {
 								token = tokens.nextToken();
 								if (token.equalsIgnoreCase("[")) {
-									ArrayList<String> properties = getPropertiesWithinBracket(tokens);
-									if (properties.size()>0) {
-										inOrder = Boolean.parseBoolean(properties.get(0));
-									} 
-									if (properties.size()>1) {
-										slop = Integer.parseInt(properties.get(1));
-									} 
-									if (properties.size()>2) {
-										boost = Double.parseDouble(properties.get(2));
-									} 
-									if (properties.size()==0){
-										System.out.println("Empty properties detected");
-									}
-									token = tokens.nextToken();
-									System.out.println("" + inOrder + " " + slop + " " + boost);
-									System.out.println(properties.size());
+									properties = getPropertiesWithinBracket(tokens);
 								}
 								if (!token.equalsIgnoreCase("(")) {
 									System.out.println("Expected ( after @near_y!!!! but get the following instead " + token);
 								}
 								List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_ypos_entity_", "");
-								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, inOrder, slop, boost);
+								HashMap<String, Object> subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
 								spanNearElements.add(subQuery);
 							} else if (token.equalsIgnoreCase("@contains")) {
 								token = tokens.nextToken();
@@ -267,6 +209,10 @@ public class ClusteringAction extends
 					HashMap<String, Object> query = createSpanNearQuery(spanNearElements, false, Integer.MAX_VALUE, 1);
 					searchRequestMap.put("query", query);
 					searchRequestMap.put("size", 1000);
+                    ArrayList<String> shownFields = new ArrayList<>();
+                    shownFields.add("title");
+                    shownFields.add("url");
+					searchRequestMap.put("_source", shownFields);
 					System.out.println(searchRequestMap);
 					XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON).map(searchRequestMap);
 					XContentParser searchXParser = XContentFactory.xContent(XContentType.JSON)
@@ -283,29 +229,29 @@ public class ClusteringAction extends
 					// ignore
 				}
 				e.printStackTrace();
-				throw new ClusteringException("Failed to parse source [" + sSource + "]" + e, e);
+				throw new org.forward.entitysearch.esdocumentsearch.ClusteringException("Failed to parse source [" + sSource + "]" + e, e);
 			}
 		}
 
-		@SuppressWarnings("unchecked")
-		private List<HashMap<String, Object>> getAllTokens(StringTokenizer tokens) {
-			List<HashMap<String, Object>> spanNearElements = new ArrayList<>();
-			while (tokens.hasMoreTokens()) {
-				String token = tokens.nextToken();
-				if (token.charAt(0) == '#') {
-					token = token.substring(1);
-					HashMap<String, Object> hashMapElement = getSpanElementForEntity(token, "_entity_", "_begin");
-					spanNearElements.add(hashMapElement);
-				} else {
-					HashMap<String, Object> hashMapElement = getSpanElementForKeyword(token);
-					spanNearElements.add(hashMapElement);
-				}
-			}
-			return spanNearElements;
-		}
+//		@SuppressWarnings("unchecked")
+//		private List<HashMap<String, Object>> getAllTokens(StringTokenizer tokens) {
+//			List<HashMap<String, Object>> spanNearElements = new ArrayList<>();
+//			while (tokens.hasMoreTokens()) {
+//				String token = tokens.nextToken();
+//				if (token.charAt(0) == '#') {
+//					token = token.substring(1);
+//					HashMap<String, Object> hashMapElement = getSpanElementForEntity(token, "_entity_", "_begin");
+//					spanNearElements.add(hashMapElement);
+//				} else {
+//					HashMap<String, Object> hashMapElement = getSpanElementForKeyword(token);
+//					spanNearElements.add(hashMapElement);
+//				}
+//			}
+//			return spanNearElements;
+//		}
 
 		@SuppressWarnings("unchecked")
-		private List<HashMap<String, Object>> getAllTokensWithinBracket(StringTokenizer tokens, String prefix, String suffix) {
+		private List<HashMap<String, Object>> getAllTokensWithinBracket(StringTokenizer tokens, String type, String suffix) {
 			List<HashMap<String, Object>> spanNearElements = new ArrayList<>();
 			while (tokens.hasMoreTokens()) {
 				String token = tokens.nextToken();
@@ -314,8 +260,7 @@ public class ClusteringAction extends
 					break;
 				}
 				if (token.charAt(0) == '#') {
-					token = token.substring(1);
-					HashMap<String, Object> hashMapElement = getSpanElementForEntity(token, prefix, suffix);
+					HashMap<String, Object> hashMapElement = getSpanElementForEntity(token, type, suffix);
 					spanNearElements.add(hashMapElement);
 				} else {
 					HashMap<String, Object> hashMapElement = getSpanElementForKeyword(token);
@@ -326,17 +271,35 @@ public class ClusteringAction extends
 		}
 		
 		@SuppressWarnings("unchecked")
-		private ArrayList<String> getPropertiesWithinBracket(StringTokenizer tokens) {
+		private QueryProperties getPropertiesWithinBracket(StringTokenizer tokens) {
 			ArrayList<String> properties = new ArrayList<>();
 			while (tokens.hasMoreTokens()) {
 				String token = tokens.nextToken();
 				if (token.equalsIgnoreCase("]")) {
+					tokens.nextToken();
 					break;
 				} else {
 					properties.add(token);
 				}
 			}
-			return properties;
+			boolean inOrder = false;
+			int slop = 10;
+			double boost = 1;
+			if (properties.size()>0) {
+				inOrder = Boolean.parseBoolean(properties.get(0));
+			}
+			if (properties.size()>1) {
+				slop = Integer.parseInt(properties.get(1));
+			}
+			if (properties.size()>2) {
+				boost = Double.parseDouble(properties.get(2));
+			}
+			if (properties.size()==0){
+				System.out.println("Empty properties detected");
+			}
+			System.out.println("" + inOrder + " " + slop + " " + boost);
+			System.out.println(properties.size());
+			return new QueryProperties(inOrder, slop, boost);
 		}
 
 		@SuppressWarnings("unchecked")
@@ -351,6 +314,14 @@ public class ClusteringAction extends
 			return query;
 		}
 
+        @SuppressWarnings("unchecked")
+        private HashMap<String, Object> createSpanOrQuery(List<HashMap<String, Object>> elements) {
+            HashMap<String, Object> query = new HashMap<String, Object>();
+            query.put("span_near", new HashMap<String, Object>());
+            ((HashMap<String, Object>) query.get("span_near")).put("clauses", elements);
+            return query;
+        }
+
 		@SuppressWarnings("unchecked")
 		private HashMap<String, Object> getSpanElementForKeyword(String token) {
 			HashMap<String, Object> hashMapElement = new HashMap<String, Object>();
@@ -361,7 +332,7 @@ public class ClusteringAction extends
 		}
 
 		@SuppressWarnings("unchecked")
-		private HashMap<String, Object> getSpanElementForEntity(String token, String prefix, String suffix) {
+		private HashMap<String, Object> getSpanElementForEntity(String token, String type, String suffix) {
 			HashMap<String, Object> hashMapElement = new HashMap<String, Object>();
 			hashMapElement.put("field_masking_span", new HashMap<String, Object>());
 			HashMap<String, Object> fieldMaskingSpan = (HashMap<String, Object>) (hashMapElement
@@ -370,7 +341,14 @@ public class ClusteringAction extends
 			HashMap<String, Object> queryH = (HashMap<String, Object>) (fieldMaskingSpan.get("query"));
 			queryH.put("span_term", new HashMap<String, Object>());
 			HashMap<String, Object> spanTerm = (HashMap<String, Object>) (queryH.get("span_term"));
-			spanTerm.put(prefix + token + suffix, "oentityo");
+			switch (type) {
+                case "_entity_":
+                    spanTerm.put(FieldDictionary.getInstance().getEntity(token).getKey(), FieldDictionary.getInstance().getEntity(token).getValue());
+                    break;
+                default:
+                    System.out.println("SOMETHING WRONG HERE!!!!!");
+                //			spanTerm.put(type + token + suffix, "oentityo");
+            }
 			fieldMaskingSpan.put("field", "text");
 			return hashMapElement;
 		}
@@ -482,7 +460,7 @@ public class ClusteringAction extends
 		}
 
 		public ClusteringActionResponse(SearchResponse searchResponse) {
-			this.searchResponse = Preconditions.checkNotNull(searchResponse);
+			this.searchResponse = org.forward.entitysearch.esdocumentsearch.Preconditions.checkNotNull(searchResponse);
 		}
 
 		public SearchResponse getSearchResponse() {
@@ -624,7 +602,7 @@ public class ClusteringAction extends
 
 		@Override
 		public String toString() {
-			return ToString.objectToJson(this);
+			return org.forward.entitysearch.esdocumentsearch.ToString.objectToJson(this);
 		}
 	}
 
