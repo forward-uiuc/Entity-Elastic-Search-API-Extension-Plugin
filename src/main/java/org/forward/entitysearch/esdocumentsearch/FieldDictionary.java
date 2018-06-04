@@ -51,6 +51,16 @@ public class FieldDictionary {
         p.put("#phone", new Pair<>("RegexTag","PHONE"));
         p.put("#zip", new Pair<>("RegexTag","ZIPCODE"));
         p.put("#course_number", new Pair<>("RegexTag","COURSE_NO"));
+
+        for (int i = 0; i <= 2; i++) {
+            p.put("#screen"+i, new Pair<>("Type","markerscreen"+i));
+//            p.put("#yscreen"+i, new Pair<>("Type","markerscreen"+i));
+        }
+
+        for (int i = 0; i <= 10; i++) {
+            p.put("#page"+i, new Pair<>("Type","pagescreen"+i));
+//            p.put("#ypage"+i, new Pair<>("Type","pagescreen"+i));
+        }
     }
 
     public static FieldDictionary getInstance() {
@@ -63,4 +73,13 @@ public class FieldDictionary {
     Pair<String, String> getEntity(String entity) {
         return new Pair<>("_entity_" + p.get(entity).getKey(),p.get(entity).getValue());
     }
+
+    Pair<String, String> getLayoutX(String entity) {
+        return new Pair<>("_layout_X_" + p.get(entity).getKey(),p.get(entity).getValue());
+    }
+
+    Pair<String, String> getLayoutY(String entity) {
+        return new Pair<>("_layout_Y_" + p.get(entity).getKey(),p.get(entity).getValue());
+    }
+
 }
