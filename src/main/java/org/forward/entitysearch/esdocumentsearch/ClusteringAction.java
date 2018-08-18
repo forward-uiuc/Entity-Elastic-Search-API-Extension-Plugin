@@ -164,12 +164,16 @@ public class ClusteringAction extends
                     }
 //					tokens = new StringTokenizer((String) searchRequestMap.get("query"), DELIMITER);
 //					spanNearElements = getAllTokens(tokens);
-                    HashMap<String, Object> query = createSpanNearQuery(spanNearElements, false, Integer.MAX_VALUE, 1);
+
+
+//                    HashMap<String, Object> query = createSpanNearQuery(spanNearElements, false, Integer.MAX_VALUE, 1);
+                    HashMap<String, Object> query = createBoolShouldMatchQuery(spanNearElements, -1);
                     searchRequestMap.put("query", query);
                     searchRequestMap.put("size", 1000);
                     ArrayList<String> shownFields = new ArrayList<>();
                     shownFields.add("title");
                     shownFields.add("url");
+                    shownFields.add("text");
                     searchRequestMap.put("_source", shownFields);
                     System.out.println(searchRequestMap);
                     XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON).map(searchRequestMap);
@@ -193,14 +197,30 @@ public class ClusteringAction extends
 
         private HashMap<String, Object> createOperation(StringTokenizer tokens, String token) {
             HashMap<String, Object> subQuery = null;
-            if (token.equalsIgnoreCase("@near")) {
-                subQuery = createNearOperation(tokens);
-            } else if (token.equalsIgnoreCase("@near_x")) {
-                subQuery = createNearXOperation(tokens);
-            } else if (token.equalsIgnoreCase("@near_y")) {
-                subQuery = createNearYOperation(tokens);
-            } else if (token.equalsIgnoreCase("@contains")) {
-                subQuery = createContainsOperation(tokens);
+            switch (token) {
+                case "@near":
+                    subQuery = createNearOperation(tokens, "_entity_");
+                    break;
+                case "@near_x":
+                    subQuery = createNearOperation(tokens, "_xpos_entity_");
+                    break;
+                case "@near_y":
+                    subQuery = createNearOperation(tokens, "_ypos_entity_");
+                    break;
+                case "@contains":
+                    subQuery = createContainsOperation(tokens);
+                    break;
+                case "@or":
+                    subQuery = createOrOperation(tokens, "_entity_");
+                    break;
+                case "@or_x":
+                    subQuery = createOrOperation(tokens, "_xpos_entity_");
+                    break;
+                case "@or_y":
+                    subQuery = createOrOperation(tokens, "_ypos_entity_");
+                    break;
+                default:
+                    System.err.print("Operation is not supported!");
             }
             return subQuery;
         }
@@ -212,12 +232,12 @@ public class ClusteringAction extends
             if (!token.equalsIgnoreCase("(")) {
                 System.out.println("Expected ( after @contains here!!!! but get the following instead " + token);
             }
-            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_entity_", "_begin");
+            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_entity_", "");
             subQuery = createSpanNearQuery(tmp, false, Integer.MAX_VALUE, 1);
             return subQuery;
         }
 
-        private HashMap<String, Object> createNearYOperation(StringTokenizer tokens) {
+        private HashMap<String, Object> createNearOperation(StringTokenizer tokens, String type) {
             String token;
             HashMap<String, Object> subQuery;
             token = tokens.nextToken();
@@ -225,43 +245,16 @@ public class ClusteringAction extends
             if (token.equalsIgnoreCase("[")) {
                 properties = getPropertiesWithinBracket(tokens);
             }
-//            if (!token.equalsIgnoreCase("(")) {
-//                System.out.println("Expected ( after @near_y!!!! but get the following instead " + token);
-//            }
-            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_ypos_entity_", "");
+            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, type, "");
             subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
             return subQuery;
         }
 
-        private HashMap<String, Object> createNearXOperation(StringTokenizer tokens) {
-            String token;
+        private HashMap<String, Object> createOrOperation(StringTokenizer tokens, String type) {
             HashMap<String, Object> subQuery;
-            token = tokens.nextToken();
-            QueryProperties properties = new QueryProperties(false, 10, 1);
-            if (token.equalsIgnoreCase("[")) {
-                properties = getPropertiesWithinBracket(tokens);
-            }
-//            if (!token.equalsIgnoreCase("(")) {
-//                System.out.println("Expected ( after @near_x !!!! but get the following token instead: " + token);
-//            }
-            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_xpos_entity_", "");
-            subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
-            return subQuery;
-        }
-
-        private HashMap<String, Object> createNearOperation(StringTokenizer tokens) {
-            String token;
-            HashMap<String, Object> subQuery;
-            token = tokens.nextToken();
-            QueryProperties properties = new QueryProperties(false, 10, 1);
-            if (token.equalsIgnoreCase("[")) {
-                properties = getPropertiesWithinBracket(tokens);
-            }
-//            if (!token.equalsIgnoreCase("(")) {
-//                System.out.println("Expected ( after @near!!!! but get the following instead " + token);
-//            }
-            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, "_entity_", "_begin");
-            subQuery = createSpanNearQuery(tmp, properties.inOrder, properties.slop, properties.boost);
+            tokens.nextToken();
+            List<HashMap<String, Object>> tmp = getAllTokensWithinBracket(tokens, type, "");
+            subQuery = createSpanOrQuery(tmp);
             return subQuery;
         }
 
@@ -350,10 +343,22 @@ public class ClusteringAction extends
         }
 
         @SuppressWarnings("unchecked")
+        private HashMap<String, Object> createBoolShouldMatchQuery(List<HashMap<String, Object>> elements,
+                                                             int minShouldMatch) {
+            HashMap<String, Object> query = new HashMap<String, Object>();
+            query.put("bool", new HashMap<String, Object>());
+            ((HashMap<String, Object>) query.get("bool")).put("should", elements);
+            if (minShouldMatch > 0) {
+                ((HashMap<String, Object>) query.get("bool")).put("minimum_should_match", minShouldMatch);
+            }
+            return query;
+        }
+
+        @SuppressWarnings("unchecked")
         private HashMap<String, Object> createSpanOrQuery(List<HashMap<String, Object>> elements) {
             HashMap<String, Object> query = new HashMap<String, Object>();
             query.put("span_or", new HashMap<String, Object>());
-            ((HashMap<String, Object>) query.get("span_near")).put("clauses", elements);
+            ((HashMap<String, Object>) query.get("span_or")).put("clauses", elements);
             return query;
         }
 
